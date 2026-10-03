@@ -19,6 +19,10 @@ const I18N = {
     e_device_mismatch: "هذا الحساب مرتبط بجوال آخر. تواصل مع المدير", e_network: "لا يوجد اتصال بالإنترنت",
     e_generic: "حدث خطأ، حاول مرة أخرى", e_unauthorized: "سجّل الدخول من جديد", e_break_limit: "تم استخدام البريك اليوم",
     e_already_clocked_in: "أنت على رأس العمل بالفعل", e_not_clocked_in: "لم تبدأ الدوام بعد",
+    photo_title: "التقط صورة للحضور", photo_btn: "التقاط وتسجيل الحضور", photo_denied: "اسمح للتطبيق باستخدام الكاميرا من إعدادات الجوال",
+    e_photo_required: "الصورة مطلوبة لتسجيل الحضور", e_bad_photo: "تعذّر إرسال الصورة، حاول مرة أخرى",
+    my_month: "ملخصي الشهري", close: "إغلاق", no_data: "لا توجد سجلات",
+    m_days: "أيام الحضور", m_work: "ساعات العمل", m_late: "التأخير", m_over: "تجاوز البريك", m_absent: "أيام الغياب", m_leave: "أيام الإجازة", m_early: "خروج مبكر", m_times: "مرات",
   },
   bn: {
     brand: "শাহী কামরা হাজিরা", login: "লগইন", empNo: "কর্মী নম্বর", pin: "পিন", enter: "প্রবেশ",
@@ -39,6 +43,10 @@ const I18N = {
     e_device_mismatch: "এই অ্যাকাউন্ট অন্য ফোনের সাথে যুক্ত। ম্যানেজারের সাথে কথা বলুন", e_network: "ইন্টারনেট সংযোগ নেই",
     e_generic: "সমস্যা হয়েছে, আবার চেষ্টা করুন", e_unauthorized: "আবার লগইন করুন", e_break_limit: "আজকের বিরতি নেওয়া হয়ে গেছে",
     e_already_clocked_in: "আপনি ইতিমধ্যে কাজে আছেন", e_not_clocked_in: "আপনি এখনও কাজ শুরু করেননি",
+    photo_title: "হাজিরার জন্য ছবি তুলুন", photo_btn: "ছবি তুলে হাজিরা দিন", photo_denied: "ফোনের সেটিংসে ক্যামেরার অনুমতি দিন",
+    e_photo_required: "হাজিরার জন্য ছবি দরকার", e_bad_photo: "ছবি পাঠানো যায়নি, আবার চেষ্টা করুন",
+    my_month: "আমার মাসিক সারসংক্ষেপ", close: "বন্ধ", no_data: "কোনো রেকর্ড নেই",
+    m_days: "উপস্থিত দিন", m_work: "কাজের সময়", m_late: "দেরি", m_over: "বিরতি অতিরিক্ত", m_absent: "অনুপস্থিত দিন", m_leave: "ছুটির দিন", m_early: "আগে বের", m_times: "বার",
   },
 };
 
@@ -162,11 +170,13 @@ function renderHome() {
   <div class="banner bad ${offline ? "" : "hide"}" id="off">⚠️ ${t("offline")}</div>
   <div class="actions" id="actions">${main}</div>
   ${setupCard()}
+  <button class="link" id="mm">📊 ${t("my_month")}</button>
   <button class="link" id="out">${t("logout")}</button>`;
   bindLang();
   app.querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => act(b.dataset.a)));
   const end = $("#end"); if (end) end.onclick = confirmEnd;
   $("#out").onclick = logout;
+  $("#mm").onclick = () => openMonth(0);
   const bind = (id, f) => { const el = $(id); if (el) el.onclick = f; };
   bind("#inst", async () => { deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null; renderHome(); tick(); });
   bind("#push", async () => { await enablePush(); renderHome(); tick(); });
@@ -227,8 +237,15 @@ async function act(fn) {
   if (busy) return; busy = true;
   document.querySelectorAll(".btn").forEach((b) => (b.disabled = true));
   try {
+    let photo = null;
+    if (fn === "clock_in" && S.require_photo) {
+      photo = await takePhoto();
+      if (!photo) { document.querySelectorAll(".btn").forEach((b) => (b.disabled = false)); busy = false; return; }
+    }
     const p = await getPos();
-    const r = await rpc(fn, { p_token: token, p_lat: p?.lat ?? null, p_lng: p?.lng ?? null, p_acc: p?.acc ?? null });
+    const args = { p_token: token, p_lat: p?.lat ?? null, p_lng: p?.lng ?? null, p_acc: p?.acc ?? null };
+    if (photo) args.p_photo = photo;
+    const r = await rpc(fn, args);
     navigator.vibrate?.(60); lastKey = null;
     if (r.result) {
       const rs = r.result, msg = t("break_res", { a: dur(rs.break_min * 60), b: dur(rs.allowed_min * 60) }) + (rs.over_min ? " — " + t("break_res_over", { c: dur(rs.over_min * 60) }) : "");
@@ -242,6 +259,57 @@ async function act(fn) {
     document.querySelectorAll(".btn").forEach((b) => (b.disabled = false));
   } finally { busy = false; }
 }
+function takePhoto() {
+  return new Promise(async (res) => {
+    const m = document.createElement("div"); m.className = "modal";
+    m.innerHTML = `<div><h3>${t("photo_title")}</h3><video id="cam" autoplay playsinline muted style="width:100%;max-height:50vh;object-fit:cover;border-radius:18px;background:#000;transform:scaleX(-1)"></video>
+      <button class="btn green" id="snap" style="min-height:84px;font-size:24px">📸 ${t("photo_btn")}</button><button class="btn sec" id="pc" style="min-height:64px">${t("cancel")}</button></div>`;
+    document.body.appendChild(m);
+    let stream; const v = $("#cam", m);
+    const done = (x) => { stream?.getTracks().forEach((tr) => tr.stop()); m.remove(); res(x); };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } }, audio: false });
+      v.srcObject = stream; await v.play().catch(() => {});
+    } catch { toast(t("photo_denied"), 7000); return done(null); }
+    $("#pc", m).onclick = () => done(null);
+    $("#snap", m).onclick = () => {
+      const w = v.videoWidth || 640, h = v.videoHeight || 480, k = Math.min(1, 480 / Math.max(w, h));
+      const c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+      done(c.toDataURL("image/jpeg", 0.6));
+    };
+  });
+}
+
+async function openMonth(off) {
+  const base = new Date(new Date(srvNow()).toLocaleDateString("sv-SE", { timeZone: TZ }).slice(0, 7) + "-01T12:00:00Z");
+  base.setUTCMonth(base.getUTCMonth() + off);
+  const y = base.getUTCFullYear(), mo = base.getUTCMonth() + 1, last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  document.querySelectorAll(".modal.mm").forEach((x) => x.remove());
+  const m = document.createElement("div"); m.className = "modal mm";
+  const title = dg(base.toLocaleDateString(lang === "bn" ? "bn-BD-u-ca-gregory-nu-latn" : "ar-SA-u-ca-gregory-nu-latn", { timeZone: "UTC", month: "long", year: "numeric" }));
+  m.innerHTML = `<div><h3>${t("my_month")}</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center"><button class="btn sec" id="mp" style="width:64px;min-height:48px">‹</button><b>${title}</b><button class="btn sec" id="mn" style="width:64px;min-height:48px" ${off >= 0 ? "disabled" : ""}>›</button></div>
+    <div id="mbody" style="text-align:center;color:var(--mut)">…</div><button class="btn sec" id="mc">${t("close")}</button></div>`;
+  document.body.appendChild(m);
+  $("#mc", m).onclick = () => m.remove(); $("#mp", m).onclick = () => openMonth(off - 1); $("#mn", m).onclick = () => openMonth(off + 1);
+  try {
+    const r = await rpc("my_month", { p_token: token, p_from: `${y}-${pad(mo)}-01`, p_to: `${y}-${pad(mo)}-${pad(last)}` });
+    const s = r.summary[0] || {};
+    const card = (l, v) => `<div class="card" style="padding:12px;text-align:center"><div style="font-size:13px;color:var(--mut);font-weight:700">${l}</div><div style="font-size:20px;font-weight:800;margin-top:4px">${v}</div></div>`;
+    const dm = (min) => dg(dur((min || 0) * 60));
+    const rows = r.days.slice().reverse().map((d) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:15px;direction:ltr">
+      <b>${dg(d.date.slice(8))}</b><span>${dg(fTime(d.clock_in))} → ${d.clock_out ? dg(fTime(d.clock_out)) : "…"}</span>
+      <span>${d.late_min ? "⏱" + dg(d.late_min) : ""} ${d.over_min ? "☕+" + dg(d.over_min) : ""}</span></div>`).join("");
+    $("#mbody", m).style.color = "var(--ink)";
+    $("#mbody", m).innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      ${card(t("m_days"), dg(s.days_present || 0))}${card(t("m_work"), dm(s.work_min))}
+      ${card(t("m_late"), `${dg(s.late_count || 0)} ${t("m_times")}<br><small>${dm(s.late_min)}</small>`)}${card(t("m_over"), `${dg(s.over_count || 0)} ${t("m_times")}<br><small>${dm(s.over_min)}</small>`)}
+      ${card(t("m_absent"), dg(s.absent_days || 0))}${card(t("m_leave"), dg(s.leave_days || 0))}</div>
+      <div style="text-align:start;max-height:30vh;overflow:auto">${rows || `<p style="text-align:center;color:var(--mut)">${t("no_data")}</p>`}</div>`;
+  } catch (e) { $("#mbody", m).textContent = errMsg(e); }
+}
+
 function confirmEnd() {
   const m = document.createElement("div"); m.className = "modal";
   m.innerHTML = `<div><h3>${t("confirm_end")}</h3><button class="btn red" id="y" style="min-height:84px">${t("yes_end")}</button><button class="btn sec" id="n" style="min-height:76px;font-size:20px">${t("cancel")}</button></div>`;
