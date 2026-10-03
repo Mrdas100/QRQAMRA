@@ -125,14 +125,15 @@ function empForm(e) {
   ${e ? "" : `<div class="field"><label>PIN (4–6 أرقام)</label><input class="inp" id="f_pin" inputmode="numeric" maxlength="6" style="font-size:18px"></div>`}
   <div class="field"><label>الشفت الافتراضي</label><select class="inp" id="f_sh" style="font-size:18px"><option value="">بدون شفت</option>${shifts.map((s) => `<option value="${s.id}" ${e?.shift_id == s.id ? "selected" : ""}>${esc(s.name)} (${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)})</option>`).join("")}</select></div>
   <div class="field"><label>يوم الإجازة الأسبوعية</label><select class="inp" id="f_off" style="font-size:18px"><option value="">لا يوجد</option>${DAYS.map((d, i) => `<option value="${i}" ${e?.weekly_off === i ? "selected" : ""}>${d}</option>`).join("")}</select></div>
-  <div class="field"><label>سعر الساعة (اختياري، لحساب المستحق)</label><input class="inp" id="f_rate" inputmode="decimal" value="${esc(e?.hourly_rate ?? "")}" style="font-size:18px"></div>
+  <div class="field"><label>الراتب الشهري الثابت (يُحسب كاملًا والبريك مدفوع)</label><input class="inp" id="f_sal" inputmode="decimal" value="${esc(e?.monthly_salary ?? "")}" style="font-size:18px"></div>
+  <div class="field"><label>سعر الساعة (بديل: لمن راتبه بالساعات)</label><input class="inp" id="f_rate" inputmode="decimal" value="${esc(e?.hourly_rate ?? "")}" style="font-size:18px"></div>
   <details><summary style="font-weight:700;cursor:pointer;padding:6px 0">جدول مخصص حسب اليوم (اختياري)</summary>
   ${DAYS.map((d, i) => `<div class="field" style="margin:8px 0"><label>${d}</label><select class="inp" id="w_${i}" style="font-size:16px">${opts(wk[i])}</select></div>`).join("")}</details>
   <p class="err" id="f_e"></p><button class="btn green" id="f_ok" style="min-height:64px;font-size:20px">حفظ</button>`);
   $("#f_ok", m).onclick = async () => {
     const week = {}; for (let i = 0; i < 7; i++) week[i] = $("#w_" + i, m).value;
     try {
-      await call("admin_save_employee", { p: { id: e?.id ?? null, emp_no: $("#f_no", m).value, name_ar: $("#f_ar", m).value, name_bn: $("#f_bn", m).value, pin: $("#f_pin", m)?.value, shift_id: $("#f_sh", m).value, weekly_off: $("#f_off", m).value, hourly_rate: $("#f_rate", m).value, week } });
+      await call("admin_save_employee", { p: { id: e?.id ?? null, emp_no: $("#f_no", m).value, name_ar: $("#f_ar", m).value, name_bn: $("#f_bn", m).value, pin: $("#f_pin", m)?.value, shift_id: $("#f_sh", m).value, weekly_off: $("#f_off", m).value, hourly_rate: $("#f_rate", m).value, monthly_salary: $("#f_sal", m).value, week } });
       m.remove(); empsView();
     } catch (x) { $("#f_e", m).textContent = eMsg(x); }
   };
@@ -215,6 +216,17 @@ function editSession(d, done) {
 
 // ───────── reports ─────────
 let rep = null;
+// الراتب الثابت: الأساس = الراتب الشهري (للتقرير الشهري فقط)، والخصم مقترح (غياب بلا إجازة + دقائق التأخير/الخروج المبكر/تجاوز البريك على أساس دوام 12 ساعة)
+const payInfo = (s, monthly) => {
+  if (s.monthly_salary != null) {
+    if (!monthly) return { base: "—", ded: "—", net: "—" };
+    const sal = +s.monthly_salary, daily = sal / 30, minute = daily / 720;
+    const ded = s.absent_days * daily + (s.late_min + s.early_min + s.over_min) * minute;
+    return { base: sal.toFixed(2), ded: ded.toFixed(2), net: Math.max(0, sal - ded).toFixed(2) };
+  }
+  if (s.pay != null) return { base: s.pay, ded: "—", net: s.pay };
+  return { base: "—", ded: "—", net: "—" };
+};
 function repView() {
   const today = new Date(srvNow()).toLocaleDateString("sv-SE", { timeZone: TZ });
   $("#view").innerHTML = `<div class="ctrl noprint"><div class="field" style="margin:0"><label>النوع</label><select class="inp" id="rt"><option value="d">يومي</option><option value="w">أسبوعي (7 أيام)</option><option value="m" selected>شهري</option></select></div>
@@ -232,18 +244,19 @@ async function runReport() {
   if (ty === "m") { const [y, m] = v.split("-").map(Number); from = `${v}-01`; to = `${v}-${pad(new Date(y, m, 0).getDate())}`; }
   else { from = v; to = ty === "d" ? v : new Date(Date.parse(v + "T00:00:00Z") + 6 * 864e5).toISOString().slice(0, 10); }
   try { rep = await call("admin_report", { p_from: from, p_to: to, p_emp: $("#re").value || null }); } catch (x) { return toastA(eMsg(x)); }
+  rep.monthly = ty === "m";
   const S = rep.summary;
-  $("#rout").innerHTML = `<h2 class="sec-t">تقرير الحضور — شاهي قمرا</h2><p class="print-only" style="margin:0">الفترة: ${rep.from} → ${rep.to}</p><p class="noprint" style="margin:0;color:var(--mut)">الفترة: ${rep.from} → ${rep.to} · ساعات العمل = مدة الدوام − مدة البريك · المستحق = ساعات العمل الفعلية × سعر الساعة</p>
-  <div class="scroll" style="margin:10px 0"><table><thead><tr><th>الموظف</th><th>أيام الحضور</th><th>ساعات العمل</th><th>وقت البريك</th><th>المسموح</th><th>تجاوز البريك</th><th>مرات التجاوز</th><th>أيام الغياب</th><th>مرات التأخير</th><th>إجمالي التأخير</th><th>خروج مبكر</th><th>أيام الإجازة</th><th>سعر الساعة</th><th>المستحق</th></tr></thead><tbody>
-  ${S.map((s) => `<tr><td><b>${esc(s.name_ar)}</b></td><td>${s.days_present}</td><td>${dm(s.work_min)}</td><td>${dm(s.break_min)}</td><td>${dm(s.allowed_min)}</td><td>${dm(s.over_min)}</td><td>${s.over_count}</td><td>${s.absent_days}</td><td>${s.late_count}</td><td>${dm(s.late_min)}</td><td>${dm(s.early_min)} (${s.early_count})</td><td>${s.leave_days}</td><td>${s.hourly_rate ?? "—"}</td><td><b>${s.pay ?? "—"}</b></td></tr>`).join("") || '<tr><td colspan="14">لا توجد بيانات</td></tr>'}</tbody></table></div>
+  $("#rout").innerHTML = `<h2 class="sec-t">تقرير الحضور — شاهي قمرا</h2><p class="print-only" style="margin:0">الفترة: ${rep.from} → ${rep.to}</p><p class="noprint" style="margin:0;color:var(--mut)">الفترة: ${rep.from} → ${rep.to} · ساعات العمل = مدة الدوام − مدة البريك · الراتب ثابت والبريك مدفوع. الخصم المقترح (للتقرير الشهري) = أيام الغياب بلا إجازة × (الراتب÷30) + دقائق التأخير والخروج المبكر وتجاوز البريك × (الراتب÷30÷720). أرقام استرشادية والقرار لك.</p>
+  <div class="scroll" style="margin:10px 0"><table><thead><tr><th>الموظف</th><th>أيام الحضور</th><th>ساعات العمل</th><th>وقت البريك</th><th>المسموح</th><th>تجاوز البريك</th><th>مرات التجاوز</th><th>أيام الغياب</th><th>مرات التأخير</th><th>إجمالي التأخير</th><th>خروج مبكر</th><th>أيام الإجازة</th><th>الراتب / الأساس</th><th>الخصم المقترح</th><th>الصافي المقترح</th></tr></thead><tbody>
+  ${S.map((s) => `<tr><td><b>${esc(s.name_ar)}</b></td><td>${s.days_present}</td><td>${dm(s.work_min)}</td><td>${dm(s.break_min)}</td><td>${dm(s.allowed_min)}</td><td>${dm(s.over_min)}</td><td>${s.over_count}</td><td>${s.absent_days}</td><td>${s.late_count}</td><td>${dm(s.late_min)}</td><td>${dm(s.early_min)} (${s.early_count})</td><td>${s.leave_days}</td>${(() => { const p = payInfo(s, ty === "m"); return `<td>${p.base}</td><td>${p.ded}</td><td><b>${p.net}</b></td>`; })()}</tr>`).join("") || '<tr><td colspan="14">لا توجد بيانات</td></tr>'}</tbody></table></div>
   <h2 class="sec-t">التفاصيل اليومية</h2><div class="scroll"><table><thead><tr><th>التاريخ</th><th>الموظف</th><th>الحضور</th><th>بداية البريك</th><th>العودة</th><th>الانصراف</th><th>العمل</th><th>البريك</th><th>المسموح</th><th>التجاوز</th><th>التأخير</th><th>خروج مبكر</th></tr></thead><tbody>
   ${rep.days.map((d) => `<tr><td>${d.date}</td><td>${esc(d.name_ar)}</td><td>${fTime(d.clock_in)}</td><td>${fTime(d.break_start)}</td><td>${d.break_end ? fTime(d.break_end) : "—"}</td><td>${fTime(d.clock_out)}</td><td>${dm(d.work_min)}</td><td>${dm(d.break_min)}</td><td>${dm(d.allowed_min)}</td><td>${dm(d.over_min)}</td><td>${dm(d.late_min)}</td><td>${dm(d.early_min)}</td></tr>`).join("") || '<tr><td colspan="12">لا توجد بيانات</td></tr>'}</tbody></table></div>`;
 }
 function csv() {
   if (!rep) return toastA("اعرض التقرير أولًا");
   const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`, line = (a) => a.map(q).join(",");
-  const out = [line(["الملخص"]), line(["الموظف", "أيام الحضور", "ساعات العمل (د)", "وقت البريك (د)", "المسموح (د)", "تجاوز البريك (د)", "مرات التجاوز", "أيام الغياب", "مرات التأخير", "إجمالي التأخير (د)", "خروج مبكر (د)", "أيام الإجازة", "سعر الساعة", "المستحق"])];
-  rep.summary.forEach((s) => out.push(line([s.name_ar, s.days_present, s.work_min, s.break_min, s.allowed_min, s.over_min, s.over_count, s.absent_days, s.late_count, s.late_min, s.early_min, s.leave_days, s.hourly_rate ?? "", s.pay ?? ""])));
+  const out = [line(["الملخص"]), line(["الموظف", "أيام الحضور", "ساعات العمل (د)", "وقت البريك (د)", "المسموح (د)", "تجاوز البريك (د)", "مرات التجاوز", "أيام الغياب", "مرات التأخير", "إجمالي التأخير (د)", "خروج مبكر (د)", "أيام الإجازة", "الراتب/الأساس", "الخصم المقترح", "الصافي المقترح"])];
+  rep.summary.forEach((s) => out.push(line([s.name_ar, s.days_present, s.work_min, s.break_min, s.allowed_min, s.over_min, s.over_count, s.absent_days, s.late_count, s.late_min, s.early_min, s.leave_days, ...(() => { const p = payInfo(s, rep.monthly); return [p.base, p.ded, p.net]; })()])));
   out.push("", line(["التفاصيل"]), line(["التاريخ", "الموظف", "الحضور", "بداية البريك", "العودة", "الانصراف", "العمل (د)", "البريك (د)", "المسموح (د)", "التجاوز (د)", "التأخير (د)", "خروج مبكر (د)"]));
   rep.days.forEach((d) => out.push(line([d.date, d.name_ar, fTime(d.clock_in), fTime(d.break_start), d.break_end ? fTime(d.break_end) : "", fTime(d.clock_out), d.work_min, d.break_min, d.allowed_min, d.over_min, d.late_min, d.early_min])));
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff" + out.join("\r\n")], { type: "text/csv;charset=utf-8" })); a.download = `attendance_${rep.from}_${rep.to}.csv`; a.click();
