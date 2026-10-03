@@ -1,5 +1,6 @@
 "use strict";
-let tok = sessionStorage.getItem("atok");
+const LS = { get: () => { try { return localStorage.getItem("atok"); } catch { return null; } }, set: (v) => { try { localStorage.setItem("atok", v); } catch {} }, del: () => { try { localStorage.removeItem("atok"); } catch {} } };
+let tok = LS.get();
 let tab = "live", live = null, emps = [], shifts = [], timer = null, cur = null;
 const app = $("#app");
 const DAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
@@ -18,6 +19,22 @@ function modal(html) {
   document.body.appendChild(m); return m;
 }
 
+// ───────── admin push ─────────
+const b64 = (s) => { const p = "=".repeat((4 - (s.length % 4)) % 4); const r = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(r, (c) => c.charCodeAt(0)); };
+async function adminPush(ask) {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) { if (ask) toastA("هذا المتصفح لا يدعم التنبيهات"); return; }
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent), standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (ask) {
+    if (ios && !standalone) { modal(`<h3>ثبّت لوحة الإدارة أولًا</h3><p style="margin:0;line-height:1.9">1. افتح هذه الصفحة في Safari.<br>2. اضغط مشاركة ← «إضافة إلى الشاشة الرئيسية».<br>3. افتح «إدارة قمرا» من الأيقونة وسجّل الدخول.<br>4. اضغط «تنبيهات المدير» ووافق.</p>`); return; }
+    if ((await Notification.requestPermission()) !== "granted") { toastA("لم يتم السماح بالتنبيهات"); return; }
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(CFG.VAPID_PUBLIC_KEY) }));
+  const j = sub.toJSON();
+  await call("admin_save_push", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+  if (ask) toastA("تم تفعيل تنبيهات المدير ✅");
+}
+
 // ───────── login ─────────
 function loginView(msg = "") {
   clearInterval(timer);
@@ -27,18 +44,20 @@ function loginView(msg = "") {
   <p class="err" id="e">${esc(msg)}</p><button class="btn green" id="go" style="min-height:72px;font-size:22px">دخول</button></div>`;
   $("#go").onclick = async () => {
     $("#go").disabled = true;
-    try { const r = await rpc("admin_login", { p_user: $("#u").value, p_pass: $("#p").value }); if (r.error) { $("#e").textContent = ERR[r.error]; return; } tok = r.token; sessionStorage.setItem("atok", tok); shell(); }
+    try { const r = await rpc("admin_login", { p_user: $("#u").value, p_pass: $("#p").value }); if (r.error) { $("#e").textContent = ERR[r.error]; return; } tok = r.token; LS.set(tok); shell(); }
     catch (e) { $("#e").textContent = eMsg(e); } finally { const g = $("#go"); if (g) g.disabled = false; }
   };
 }
-function logout(silent) { rpc("logout", { p_token: tok }).catch(() => {}); tok = null; sessionStorage.removeItem("atok"); loginView(silent ? "انتهت الجلسة، سجّل الدخول" : ""); }
+function logout(silent) { rpc("logout", { p_token: tok }).catch(() => {}); tok = null; LS.del(); loginView(silent ? "انتهت الجلسة، سجّل الدخول" : ""); }
 
 // ───────── shell ─────────
 async function shell() {
-  app.innerHTML = `<div class="top noprint"><div class="brand">دوام شاهي قمرا — الإدارة</div><button class="sm" id="lo">خروج</button></div>
+  app.innerHTML = `<div class="top noprint"><div class="brand">دوام شاهي قمرا — الإدارة</div><div class="row" style="margin:0"><button class="sm" id="bell">🔔 تنبيهات المدير</button><button class="sm" id="lo">خروج</button></div></div>
   <div class="nav noprint">${[["live", "الرئيسية"], ["emps", "الموظفون"], ["rep", "التقارير"], ["set", "الإعدادات"]].map(([k, n]) => `<button data-t="${k}">${n}</button>`).join("")}</div>
   <div id="view" class="page printing"></div>`;
   $("#lo").onclick = () => logout();
+  $("#bell").onclick = () => adminPush(true).catch(() => toastA("تعذّر تفعيل التنبيهات"));
+  if ("Notification" in window && Notification.permission === "granted") adminPush(false).catch(() => {});
   app.querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => go(b.dataset.t)));
   try { [shifts, emps] = await Promise.all([call("admin_list_shifts"), call("admin_list_employees")]); } catch {}
   go(tab);
