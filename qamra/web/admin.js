@@ -100,6 +100,7 @@ async function empsView() {
     <h4>${esc(e.name_ar)} ${e.name_bn ? `<small style="color:var(--mut)">${esc(e.name_bn)}</small>` : ""}</h4>
     <p>رقم الموظف: <b>${esc(e.emp_no)}</b> · ${e.active ? "نشط" : "معطّل"}</p>
     <p>${e.device_bound ? "📱 جهاز مرتبط" : "لا يوجد جهاز مرتبط"}</p>
+    ${(() => { const l = e.last || {}; const bx = (n, v) => `<div style="background:#F1F5F3;border-radius:10px;padding:6px;text-align:center"><div style="font-size:12px;color:var(--mut);font-weight:700">${n}</div><b style="direction:ltr;display:block">${v ? fTime(v) : "—"}</b></div>`; return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0">${bx("الحضور", l.clock_in)}${bx("الانصراف", l.clock_out)}${bx("بداية البريك", l.break_start)}${bx("العودة من البريك", l.break_end)}</div>${l.session_id ? `<button class="sm" data-a="photos" data-sid="${l.session_id}">📷 عرض الصور</button>` : ""}`; })()}
     <div class="row"><button class="sm" data-a="edit" data-id="${e.id}">تعديل</button><button class="sm" data-a="log" data-id="${e.id}">السجل</button>
     <button class="sm" data-a="leaves" data-id="${e.id}">الإجازات</button><button class="sm" data-a="pin" data-id="${e.id}">تغيير PIN</button>${e.device_bound ? `<button class="sm" data-a="unbind" data-id="${e.id}">فك ربط الجهاز</button>` : ""}
     <button class="sm danger" data-a="act" data-id="${e.id}">${e.active ? "تعطيل" : "إعادة تفعيل"}</button></div></div>`).join("");
@@ -110,6 +111,7 @@ async function empsView() {
       if (b.dataset.a === "log") logView(e);
       if (b.dataset.a === "pin") pinForm(e);
       if (b.dataset.a === "leaves") leavesView(e);
+      if (b.dataset.a === "photos") showPhoto(b.dataset.sid);
       if (b.dataset.a === "unbind" && confirm(`فك ربط جهاز ${e.name_ar}؟`)) { await call("admin_unbind_device", { p_id: e.id }); toastA("تم فك الربط"); empsView(); }
       if (b.dataset.a === "act" && confirm(`${e.active ? "تعطيل" : "تفعيل"} ${e.name_ar}؟`)) { await call("admin_set_active", { p_id: e.id, p_active: !e.active }); empsView(); }
     } catch (x) { toastA(eMsg(x)); }
@@ -170,7 +172,11 @@ function dayCard(d) {
   <div class="row noprint"><button class="sm" data-s="${d.session_id}">تعديل إداري</button><button class="sm" data-p="${d.session_id}">📷 الصورة</button><button class="sm danger" data-x="${d.session_id}">حذف</button></div></div>`;
 }
 async function showPhoto(sid) {
-  try { const r = await call("admin_get_photo", { p_session: sid }); modal(r.photo ? `<h3>صورة الحضور</h3><img src="${r.photo}" alt="" style="width:100%;border-radius:16px">` : `<h3>لا توجد صورة لهذا السجل</h3>`); } catch (x) { toastA(eMsg(x)); }
+  const N = { CLOCK_IN: "الحضور", BREAK_START: "بداية البريك", BREAK_END: "العودة من البريك", CLOCK_OUT: "الانصراف" };
+  try {
+    const r = await call("admin_get_photos", { p_session: +sid });
+    modal(r.length ? `<h3>صور العمليات</h3>${r.map((x) => `<div><div style="font-weight:700;margin-bottom:6px">${N[x.type] || x.type} — ${fTime(x.at)}</div><img src="${x.photo}" alt="" style="width:100%;border-radius:16px"></div>`).join("")}` : `<h3>لا توجد صور لهذا السجل</h3><p style="margin:0;color:var(--mut);text-align:center">الصور تُحفظ 33 يومًا ثم تُحذف تلقائيًا.</p>`);
+  } catch (x) { toastA(eMsg(x)); }
 }
 function addSessionForm(e, done) {
   const m = modal(`<h3>إضافة يوم — ${esc(e.name_ar)}</h3><p style="margin:0;color:var(--mut)">التوقيت: الرياض. يُسجَّل في سجل التدقيق ويظهر «أُضيف يدويًا».</p>
@@ -272,7 +278,7 @@ async function setView() {
   <div class="field" style="margin:0"><label>Latitude</label><input class="inp" id="la" value="${esc(st.shop_lat)}"></div><div class="field" style="margin:0"><label>Longitude</label><input class="inp" id="lo" value="${esc(st.shop_lng)}"></div>
   <div class="field" style="margin:0"><label>النطاق (متر)</label><input class="inp" id="ra" value="${esc(st.radius_m || 150)}" style="width:110px"></div>
   <div class="field" style="margin:0"><label>عدد البريكات/دوام</label><input class="inp" id="mb" value="${esc(st.max_breaks || 1)}" style="width:110px"></div>
-  <div class="field" style="margin:0"><label>إلزام صورة عند الحضور</label><select class="inp" id="rph"><option value="0" ${st.require_photo === "1" ? "" : "selected"}>لا</option><option value="1" ${st.require_photo === "1" ? "selected" : ""}>نعم</option></select></div></div>
+  <div class="field" style="margin:0"><label>إلزام صورة في كل عملية (تُحذف بعد 33 يومًا)</label><select class="inp" id="rph"><option value="0" ${st.require_photo === "1" ? "" : "selected"}>لا</option><option value="1" ${st.require_photo === "1" ? "selected" : ""}>نعم</option></select></div></div>
   <div class="row"><button class="sm" id="here">📍 استخدم موقعي الحالي</button><button class="sm pri" id="sv">حفظ</button></div>
   <p style="color:var(--mut);margin:10px 0 0">GPS للتسجيل والتحقق الإضافي فقط؛ خارج النطاق يظهر كتنبيه ولا يمنع التسجيل.</p></div>
   <h2 class="sec-t">سجل التدقيق (Audit Log)</h2><div class="scroll"><table><thead><tr><th>الوقت</th><th>المدير</th><th>الإجراء</th><th>السابق</th><th>الجديد</th></tr></thead><tbody>
