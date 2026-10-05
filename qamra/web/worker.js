@@ -80,8 +80,9 @@ function dur(sec, withSec) {
   return p.join(lang === "bn" ? " " : " و");
 }
 
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const standalone = NATIVE || matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const devId = () => { let d = store.get("dev"); if (!d) { d = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now() + "xxxxxxxx"); store.set("dev", d); } return d; };
 
 function setLang(l) {
@@ -141,7 +142,7 @@ function setupCard() {
     items.push(`<h3>${t("ios_title")}</h3><ol>${I18N[lang].ios.map((x) => `<li>${x}</li>`).join("")}</ol><p><b>${t("ios_note")}</b></p>`);
   } else {
     if (deferredPrompt && !standalone) items.push(`<button class="btn sec" id="inst">📲 ${t("install")}</button>`);
-    if ("Notification" in window && "PushManager" in window && !pushOK) items.push(`<button class="btn sec" id="push">🔔 ${t("enable_push")}</button>`);
+    if ((NATIVE || ("Notification" in window && "PushManager" in window)) && !pushOK) items.push(`<button class="btn sec" id="push">🔔 ${t("enable_push")}</button>`);
     if (locOK === false || locOK === null && navigator.geolocation) items.push(`<button class="btn sec" id="loc">📍 ${t("enable_loc")}</button>`);
   }
   return items.length ? `<div class="card setup"><h3>${t("setup")}</h3>${items.join("")}</div>` : "";
@@ -266,25 +267,41 @@ async function act(fn) {
     document.querySelectorAll(".btn").forEach((b) => (b.disabled = false));
   } finally { busy = false; }
 }
+function resizeToJpeg(src, w0, h0) {
+  const k = Math.min(1, 480 / Math.max(w0, h0)), c = document.createElement("canvas");
+  c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.6);
+}
 function takePhoto() {
   return new Promise(async (res) => {
     const m = document.createElement("div"); m.className = "modal";
     m.innerHTML = `<div><h3>${t("photo_title")}</h3><video id="cam" autoplay playsinline muted style="width:100%;max-height:50vh;object-fit:cover;border-radius:18px;background:#000;transform:scaleX(-1)"></video>
-      <button class="btn green" id="snap" style="min-height:84px;font-size:24px">📸 ${t("photo_btn")}</button><button class="btn sec" id="pc" style="min-height:64px">${t("cancel")}</button></div>`;
+      <button class="btn green" id="snap" style="min-height:84px;font-size:24px">📸 ${t("photo_btn")}</button>
+      <input type="file" id="fcap" accept="image/*" capture="user" class="hide">
+      <button class="btn sec" id="pc" style="min-height:64px">${t("cancel")}</button></div>`;
     document.body.appendChild(m);
-    let stream; const v = $("#cam", m);
+    let stream; const v = $("#cam", m), f = $("#fcap", m);
     const done = (x) => { stream?.getTracks().forEach((tr) => tr.stop()); m.remove(); res(x); };
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } }, audio: false });
-      v.srcObject = stream; await v.play().catch(() => {});
-    } catch { toast(t("photo_denied"), 7000); return done(null); }
     $("#pc", m).onclick = () => done(null);
-    $("#snap", m).onclick = () => {
-      const w = v.videoWidth || 640, h = v.videoHeight || 480, k = Math.min(1, 480 / Math.max(w, h));
-      const c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
-      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
-      done(c.toDataURL("image/jpeg", 0.6));
+    // بديل: كاميرا الجوال نفسها (يعمل داخل متصفح واتساب والجوالات القديمة)
+    f.onchange = () => {
+      const file = f.files && f.files[0]; if (!file) return;
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => { const d = resizeToJpeg(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(url); done(d); };
+      img.onerror = () => { URL.revokeObjectURL(url); toast(t("e_bad_photo"), 5000); };
+      img.src = url;
     };
+    const useFile = () => { v.classList.add("hide"); $("#snap", m).onclick = () => f.click(); };
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("nocam");
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      v.srcObject = stream; await v.play().catch(() => {});
+      $("#snap", m).onclick = () => {
+        if (!v.videoWidth) return f.click();
+        done(resizeToJpeg(v, v.videoWidth, v.videoHeight));
+      };
+    } catch { useFile(); }
   });
 }
 
@@ -325,7 +342,11 @@ function confirmEnd() {
   $("#y", m).onclick = () => { m.remove(); act("clock_out"); };
 }
 function forceLogout() { token = null; S = null; store.del("tok"); renderLogin(t("e_unauthorized")); }
-async function logout() { try { await rpc("logout", { p_token: token }); } catch {} forceLogout(); renderLogin(); }
+async function logout() {
+  if (NATIVE && store.get("pushtok")) { try { await rpc("remove_device_token", { p_token: token, p_device_token: store.get("pushtok") }); } catch {} store.del("pushtok"); }
+  try { await rpc("logout", { p_token: token }); } catch {}
+  forceLogout(); renderLogin();
+}
 
 async function refresh() {
   if (!token || busy) return;
@@ -337,7 +358,24 @@ async function refresh() {
 
 // ───────── push / install ─────────
 const b64 = (s) => { const p = "=".repeat((4 - (s.length % 4)) % 4); const r = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(r, (c) => c.charCodeAt(0)); };
+// ── تنبيهات التطبيق الأصلي (APNs عبر Capacitor) ──
+async function enableNativePush() {
+  try {
+    const P = window.Capacitor.Plugins.PushNotifications;
+    let st = await P.checkPermissions();
+    if (st.receive !== "granted") st = await P.requestPermissions();
+    if (st.receive !== "granted") return;
+    await P.removeAllListeners();
+    await P.addListener("registration", async (r) => {
+      store.set("pushtok", r.value);
+      try { await rpc("save_device_token", { p_token: token, p_platform: window.Capacitor.getPlatform(), p_device_token: r.value }); pushOK = true; } catch {}
+    });
+    await P.addListener("registrationError", () => toast(t("e_generic")));
+    await P.register();
+  } catch { toast(t("e_generic")); }
+}
 async function enablePush() {
+  if (NATIVE) return enableNativePush();
   try {
     if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
     const perm = await Notification.requestPermission(); if (perm !== "granted") return;
@@ -358,10 +396,12 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
 
 // ───────── boot ─────────
 document.documentElement.lang = lang; document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+if (!NATIVE && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+if (NATIVE) { try { window.Capacitor.Plugins.CapacitorUpdater?.notifyAppReady?.(); } catch {} }
 navigator.permissions?.query({ name: "geolocation" }).then((p) => { locOK = p.state === "granted" ? true : p.state === "denied" ? false : null; p.onchange = () => { locOK = p.state === "granted"; }; }).catch(() => {});
 (async () => {
-  if ("Notification" in window && Notification.permission === "granted" && token) setTimeout(() => savePush().catch(() => {}), 1500);
+  if (NATIVE && token) setTimeout(async () => { try { const P = window.Capacitor.Plugins.PushNotifications; if ((await P.checkPermissions()).receive === "granted") enableNativePush(); } catch {} }, 1500);
+  else if ("Notification" in window && Notification.permission === "granted" && token) setTimeout(() => savePush().catch(() => {}), 1500);
   if (token) { try { applyStatus(await rpc("me", { p_token: token })); render(); } catch (e) { if (e.status === 401) forceLogout(); else renderLogin(); } } else renderLogin();
 })();
 setInterval(tick, 500);

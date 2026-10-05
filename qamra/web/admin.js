@@ -14,8 +14,9 @@ const call = async (fn, a = {}) => { try { return await rpc(fn, { p_token: tok, 
 const toastA = (m) => { const d = document.createElement("div"); d.className = "toast"; d.textContent = m; document.body.appendChild(d); setTimeout(() => d.remove(), 3000); };
 
 function modal(html) {
-  const m = document.createElement("div"); m.className = "modal noprint"; m.innerHTML = `<div>${html}</div>`;
-  m.addEventListener("click", (e) => { if (e.target === m) m.remove(); });
+  const m = document.createElement("div"); m.className = "modal noprint";
+  m.innerHTML = `<div><button class="sm" data-close style="position:sticky;top:0;z-index:3;align-self:flex-start;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12)">→ رجوع</button>${html}</div>`;
+  m.addEventListener("click", (e) => { if (e.target === m || e.target.closest("[data-close]")) m.remove(); });
   document.body.appendChild(m); return m;
 }
 
@@ -99,10 +100,10 @@ async function empsView() {
   $("#list").innerHTML = emps.map((e) => `<div class="ecard ${e.active ? "working" : ""}" ${e.active ? "" : 'style="opacity:.6"'}>
     <h4>${esc(e.name_ar)} ${e.name_bn ? `<small style="color:var(--mut)">${esc(e.name_bn)}</small>` : ""}</h4>
     <p>رقم الموظف: <b>${esc(e.emp_no)}</b> · ${e.active ? "نشط" : "معطّل"}</p>
-    <p>${e.device_bound ? "📱 جهاز مرتبط" : "لا يوجد جهاز مرتبط"}</p>
+    <p>${e.device_bound ? "📱 جهاز مرتبط" : "لا يوجد جهاز مرتبط"}${e.photo_exempt ? ' <span class="pill o">معفى من الصورة</span>' : ""}</p>
     ${(() => { const l = e.last || {}; const bx = (n, v) => `<div style="background:#F1F5F3;border-radius:10px;padding:6px;text-align:center"><div style="font-size:12px;color:var(--mut);font-weight:700">${n}</div><b style="direction:ltr;display:block">${v ? fTime(v) : "—"}</b></div>`; return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0">${bx("الحضور", l.clock_in)}${bx("الانصراف", l.clock_out)}${bx("بداية البريك", l.break_start)}${bx("العودة من البريك", l.break_end)}</div>${l.session_id ? `<button class="sm" data-a="photos" data-sid="${l.session_id}">📷 عرض الصور</button>` : ""}`; })()}
     <div class="row"><button class="sm" data-a="edit" data-id="${e.id}">تعديل</button><button class="sm" data-a="log" data-id="${e.id}">السجل</button>
-    <button class="sm" data-a="leaves" data-id="${e.id}">الإجازات</button><button class="sm" data-a="pin" data-id="${e.id}">تغيير PIN</button>${e.device_bound ? `<button class="sm" data-a="unbind" data-id="${e.id}">فك ربط الجهاز</button>` : ""}
+    <button class="sm" data-a="leaves" data-id="${e.id}">الإجازات</button><button class="sm" data-a="exempt" data-id="${e.id}">${e.photo_exempt ? "📷 إلزام الصورة" : "🚫 إعفاء من الصورة"}</button><button class="sm" data-a="pin" data-id="${e.id}">تغيير PIN</button>${e.device_bound ? `<button class="sm" data-a="unbind" data-id="${e.id}">فك ربط الجهاز</button>` : ""}
     <button class="sm danger" data-a="act" data-id="${e.id}">${e.active ? "تعطيل" : "إعادة تفعيل"}</button></div></div>`).join("");
   $("#list").onclick = async (ev) => {
     const b = ev.target.closest("[data-a]"); if (!b) return; const e = emps.find((x) => x.id == b.dataset.id);
@@ -111,6 +112,7 @@ async function empsView() {
       if (b.dataset.a === "log") logView(e);
       if (b.dataset.a === "pin") pinForm(e);
       if (b.dataset.a === "leaves") leavesView(e);
+      if (b.dataset.a === "exempt") { await call("admin_set_photo_exempt", { p_id: e.id, p_exempt: !e.photo_exempt }); toastA(e.photo_exempt ? "أُلزم بالصورة" : "تم الإعفاء من الصورة"); empsView(); }
       if (b.dataset.a === "photos") showPhoto(b.dataset.sid);
       if (b.dataset.a === "unbind" && confirm(`فك ربط جهاز ${e.name_ar}؟`)) { await call("admin_unbind_device", { p_id: e.id }); toastA("تم فك الربط"); empsView(); }
       if (b.dataset.a === "act" && confirm(`${e.active ? "تعطيل" : "تفعيل"} ${e.name_ar}؟`)) { await call("admin_set_active", { p_id: e.id, p_active: !e.active }); empsView(); }
@@ -175,7 +177,7 @@ async function showPhoto(sid) {
   const N = { CLOCK_IN: "الحضور", BREAK_START: "بداية البريك", BREAK_END: "العودة من البريك", CLOCK_OUT: "الانصراف" };
   try {
     const r = await call("admin_get_photos", { p_session: +sid });
-    modal(r.length ? `<h3>صور العمليات</h3>${r.map((x) => `<div><div style="font-weight:700;margin-bottom:6px">${N[x.type] || x.type} — ${fTime(x.at)}</div><img src="${x.photo}" alt="" style="width:100%;border-radius:16px"></div>`).join("")}` : `<h3>لا توجد صور لهذا السجل</h3><p style="margin:0;color:var(--mut);text-align:center">الصور تُحفظ 33 يومًا ثم تُحذف تلقائيًا.</p>`);
+    modal(r.length ? `<h3>صور العمليات</h3>${r.map((x) => `<div><div style="font-weight:700;margin-bottom:6px">${N[x.type] || x.type} — ${fTime(x.at)}</div><img src="${x.photo}" alt="" style="width:100%;border-radius:16px"></div>`).join("")}<button class="btn sec" data-close style="min-height:56px;font-size:18px">رجوع</button>` : `<h3>لا توجد صور لهذا السجل</h3><p style="margin:0;color:var(--mut);text-align:center">الصور تُحفظ 33 يومًا ثم تُحذف تلقائيًا.</p>`);
   } catch (x) { toastA(eMsg(x)); }
 }
 function addSessionForm(e, done) {
