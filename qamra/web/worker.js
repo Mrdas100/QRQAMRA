@@ -19,7 +19,7 @@ const I18N = {
     e_device_mismatch: "هذا الحساب مرتبط بجوال آخر. تواصل مع المدير", e_network: "لا يوجد اتصال بالإنترنت",
     e_generic: "حدث خطأ، حاول مرة أخرى", e_unauthorized: "سجّل الدخول من جديد", e_break_limit: "تم استخدام البريك اليوم",
     e_already_clocked_in: "أنت على رأس العمل بالفعل", e_not_clocked_in: "لم تبدأ الدوام بعد",
-    photo_title: "التقط صورة للتأكيد", photo_btn: "التقاط وتأكيد", t_in: "الحضور", t_bs: "بداية البريك", t_be: "العودة", t_out: "الانصراف", photo_denied: "اسمح للتطبيق باستخدام الكاميرا من إعدادات الجوال",
+    photo_title: "التقط صورة للتأكيد", photo_btn: "التقاط وتأكيد", last_shift: "آخر دوام", t_in: "الحضور", t_bs: "بداية البريك", t_be: "العودة", t_out: "الانصراف", photo_denied: "اسمح للتطبيق باستخدام الكاميرا من إعدادات الجوال",
     e_photo_required: "الصورة مطلوبة لإتمام العملية", e_bad_photo: "تعذّر إرسال الصورة، حاول مرة أخرى",
     my_month: "ملخصي الشهري", close: "إغلاق", no_data: "لا توجد سجلات",
     m_days: "أيام الحضور", m_work: "ساعات العمل", m_late: "التأخير", m_over: "تجاوز البريك", m_absent: "أيام الغياب", m_leave: "أيام الإجازة", m_early: "خروج مبكر", m_times: "مرات",
@@ -43,7 +43,7 @@ const I18N = {
     e_device_mismatch: "এই অ্যাকাউন্ট অন্য ফোনের সাথে যুক্ত। ম্যানেজারের সাথে কথা বলুন", e_network: "ইন্টারনেট সংযোগ নেই",
     e_generic: "সমস্যা হয়েছে, আবার চেষ্টা করুন", e_unauthorized: "আবার লগইন করুন", e_break_limit: "আজকের বিরতি নেওয়া হয়ে গেছে",
     e_already_clocked_in: "আপনি ইতিমধ্যে কাজে আছেন", e_not_clocked_in: "আপনি এখনও কাজ শুরু করেননি",
-    photo_title: "নিশ্চিত করতে ছবি তুলুন", photo_btn: "ছবি তুলে নিশ্চিত করুন", t_in: "হাজিরা", t_bs: "বিরতি শুরু", t_be: "ফেরা", t_out: "ছুটি", photo_denied: "ফোনের সেটিংসে ক্যামেরার অনুমতি দিন",
+    photo_title: "নিশ্চিত করতে ছবি তুলুন", photo_btn: "ছবি তুলে নিশ্চিত করুন", last_shift: "শেষ ডিউটি", t_in: "হাজিরা", t_bs: "বিরতি শুরু", t_be: "ফেরা", t_out: "ছুটি", photo_denied: "ফোনের সেটিংসে ক্যামেরার অনুমতি দিন",
     e_photo_required: "এই কাজের জন্য ছবি দরকার", e_bad_photo: "ছবি পাঠানো যায়নি, আবার চেষ্টা করুন",
     my_month: "আমার মাসিক সারসংক্ষেপ", close: "বন্ধ", no_data: "কোনো রেকর্ড নেই",
     m_days: "উপস্থিত দিন", m_work: "কাজের সময়", m_late: "দেরি", m_over: "বিরতি অতিরিক্ত", m_absent: "অনুপস্থিত দিন", m_leave: "ছুটির দিন", m_early: "আগে বের", m_times: "বার",
@@ -133,7 +133,9 @@ function render() { if (!token || !S) return renderLogin(); renderHome(); tick()
 function timesCard() {
   const td = S.today || {};
   const box = (l, v) => `<div style="background:#F1F5F3;border-radius:14px;padding:10px;text-align:center"><div style="font-size:13px;color:var(--mut);font-weight:700">${l}</div><div style="font-size:19px;font-weight:800;margin-top:2px;direction:ltr">${v ? dg(fTime(v)) : "—"}</div></div>`;
-  return `<div class="card" style="padding:12px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${box(t("t_in"), td.clock_in)}${box(t("t_out"), td.clock_out)}${box(t("t_bs"), td.break_start)}${box(t("t_be"), td.break_end)}</div></div>`;
+  const todayStr = new Date(srvNow()).toLocaleDateString("sv-SE", { timeZone: TZ });
+  const lbl = td.date && td.date !== todayStr ? `<div style="font-size:13px;color:var(--mut);font-weight:700;margin-bottom:8px">${t("last_shift")}: ${dg(td.date)}</div>` : "";
+  return `<div class="card" style="padding:12px">${lbl}<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${box(t("t_in"), td.clock_in)}${box(t("t_out"), td.clock_out)}${box(t("t_bs"), td.break_start)}${box(t("t_be"), td.break_end)}</div></div>`;
 }
 
 function setupCard() {
